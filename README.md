@@ -29,7 +29,6 @@ spiking neural network (LC-SNN)**: the most power-efficient classifier in this p
 - [Hardware](#hardware)
 - [Training the SNN](#training-the-snn)
 - [Limitations](#limitations)
-- [Roadmap](#roadmap)
 - [Team](#team)
 
 ---
@@ -162,7 +161,7 @@ Open `firmware/NeuroCardio_Review1/NeuroCardio_Review1.ino` in the Arduino IDE, 
 | **Live monitor** | ECG strip on a 25 mm/s grid with R peaks marked; heart rate and zone; verdict and confidence; P/Q/R/S morphology against class ranges; trends; beat log; device controls; an alarm banner after **3 consecutive abnormal beats** |
 | **Sessions** | every recorded session, with a heart-rate and amplitude timeline, P-vs-R scatter, beat table and CSV export |
 | **Classifier lab** | set P, Q, R by hand or from presets and watch the prediction and where the beat sits in the training data |
-| **System** | signal chain, firmware design, serial protocol and roadmap |
+| **System** | signal chain, firmware design and serial protocol |
 
 **Model switch:** the Controls card toggles between **Random Forest** and **SNN**. In SNN
 mode the dashboard shows the spiking pipeline running on every beat: the 60-sample beat
@@ -222,16 +221,6 @@ See [`notebook/README.md`](notebook/README.md) for step-by-step instructions.
   electrode signal, and real power and latency, haven't been measured yet.
 - The dashboard's Classifier lab uses a small demonstration Random Forest trained on 100
   synthetic rows. Its 100 % confidence isn't a performance figure.
-
-## Roadmap
-
-- [x] Acquisition and feature-extraction front end (Arduino)
-- [x] Host classifiers (Random Forest, 1D CNN, LC-SNN) on MIT-BIH
-- [x] Live web dashboard with recording, review and alarms
-- [ ] Load the trained SNN into the live dashboard
-- [ ] Validate on recordings from the prototype
-- [ ] Hardware-aware training (quantised weights) and on-device / neuromorphic inference
-- [ ] Measure power and latency against the CNN and Random Forest baselines
 
 ## Team
 
