@@ -1,0 +1,104 @@
+@startuml NeuroCardio_Firmware_Flow
+' ===========================================================================
+'  NeuroCardio - firmware logic flowchart (Review 1)
+'  Render at  https://www.plantuml.com/plantuml  (paste this whole file)
+'  or in VS Code with the "PlantUML" extension (Alt+D to preview).
+' ===========================================================================
+title NeuroCardio - ECG Front-End Firmware Flow
+
+start
+
+:Power on / USB connected;
+:setup()
+- Serial 115200
+- LCD "NeuroCardio v1"
+- boot beep
+- resetDetector();
+
+repeat :LOOP;
+  :handleSerial()
+  (s / t / b / c / r / ?);
+  :beepService()
+  (turn buzzer off / run alarm);
+
+  if (5 ms elapsed since\nlast sample?) then (yes)
+
+    :readInput();
+    if (simMode?) then (LIVE)
+      :read A0 (ADC 0..1023);
+    else (SIM N / SIM A)
+      :read next value from\nstored beat table + dither;
+    endif
+
+    :processSample(raw);
+    :4-tap moving average\n(50 Hz + 100 Hz notch);
+    :IIR high-pass\n(remove baseline wander);
+    :store filtered value\nin circular buffer;
+
+    if (streaming on?) then (yes)
+      :Serial "D,<value>"\n(100 Hz to PC);
+    endif
+
+    :update adaptive threshold\n(3/5 of peak envelope);
+
+    if (electrode watchdog:\nrailed > 10% of 1 s?) then (leads off)
+      :set LEAD OFF\nskip detection;
+    else (ok)
+      partition "R-peak state machine" {
+        if (state) then (IDLE)
+          if (signal > threshold\n& past refractory 250 ms?) then (yes)
+            :-> RISING;
+          endif
+        elseif (RISING) then
+          :track local max;
+          if (fell to half of max\nor 120 ms elapsed?) then (yes)
+            :lock R peak\n-> POST-R WAIT (80 ms);
+          endif
+        else (POST-R WAIT)
+          if (wait done?) then (yes)
+            :emitBeat();
+          endif
+        endif
+      }
+    endif
+
+  endif
+
+repeat while (forever) is (loop)
+
+detach
+
+' --------- emitBeat() as a separate activity ---------
+partition "emitBeat()  (once per detected beat)" {
+  start
+  :find local isoelectric\n(TP-segment reference);
+  :measure P, Q, R, S vs reference\n-> convert to millivolts;
+  if (calibration requested?) then (yes)
+    :set gain so R = 1.00 mV;
+  endif
+  :compute BPM from R-R interval\n(3-beat average);
+  :on-board 2-of-3 screen on P,Q,R\n+ brady/tachy check;
+  if (3 abnormal beats in a row?) then (yes)
+    :RESULT = ABNORMAL\nsound alarm;
+  else (no)
+    :RESULT = NORMAL;
+  endif
+  :short beep;
+  :Serial "B,ms,bpm,P,Q,R,S,result";
+  stop
+}
+
+' --------- host side ---------
+partition "PC  (host_monitor.py)" {
+  start
+  :read serial lines;
+  if (line type?) then (D,...)
+    :append to live ECG plot;
+  else (B,...)
+    :Random Forest on (P,Q,R);
+    :print beat + verdict;
+    :append row to session CSV;
+  endif
+  stop
+}
+@enduml

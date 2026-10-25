@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroCardio Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 28S3 20 3 11a6.5 6.5 0 0 1 13-1 6.5 6.5 0 0 1 13 1c0 9-13 17-13 17z' fill='%23ff5468'/%3E%3Cpath d='M5 16h6l2-4 3 9 3-11 2 6h6' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M16 28S3 20 3 11a6.5 6.5 0 0 1 13-1 6.5 6.5 0 0 1 13 1c0 9-13 17-13 17z" fill="var(--danger)"/>
+      <path d="M5 16h6l2-4 3 9 3-11 2 6h6" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+    <div>
+      <div class="brand-name">NeuroCardio</div>
+      <div class="brand-sub">Single-lead ECG monitor · Review 1</div>
+    </div>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="monitor" role="tab">Live monitor</button>
+    <button class="tab-btn" data-tab="sessions" role="tab">Sessions</button>
+    <button class="tab-btn" data-tab="lab" role="tab">Classifier lab</button>
+    <button class="tab-btn" data-tab="system" role="tab">System</button>
+  </nav>
+
+  <div class="top-actions">
+    <div class="pill" id="src-pill" title="Data source">
+      <span class="dot" id="src-dot"></span><span id="src-text">Connecting…</span>
+    </div>
+    <button class="btn btn-rec" id="rec-btn" title="Record beats to a session CSV">
+      <span class="rec-dot"></span><span id="rec-text">Record</span>
+    </button>
+    <button class="icon-btn" id="theme-btn" title="Toggle light / dark">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="alarm-banner" id="alarm-banner" hidden>
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 2 1 21h22L12 2zm0 6 1 7h-2l1-7zm0 9.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4z" fill="currentColor"/></svg>
+  <strong>Abnormal rhythm confirmed</strong>
+  <span>3 or more consecutive beats classified abnormal.</span>
+  <span class="alarm-note" id="alarm-src"></span>
+</div>
+
+<main>
+<!-- ================================================================ MONITOR -->
+<section class="tab-panel active" id="tab-monitor">
+
+  <div class="kpis">
+    <article class="card kpi kpi-hr">
+      <div class="kpi-head"><span>Heart rate</span><span class="chip" id="hr-zone">—</span></div>
+      <div class="kpi-main">
+        <svg class="heart" id="heart" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 28S3 20 3 11a6.5 6.5 0 0 1 13-1 6.5 6.5 0 0 1 13 1c0 9-13 17-13 17z"/></svg>
+        <span class="big" id="hr-val">--</span><span class="unit">bpm</span>
+      </div>
+      <canvas class="spark" id="hr-spark"></canvas>
+      <div class="kpi-foot"><span>Avg <b id="hr-avg">--</b></span><span>Min <b id="hr-min">--</b></span><span>Max <b id="hr-max">--</b></span></div>
+    </article>
+
+    <article class="card kpi kpi-verdict">
+      <div class="kpi-head"><span>Model verdict</span><span class="chip muted-chip">Random Forest</span></div>
+      <div class="verdict-row">
+        <div class="ring" id="conf-ring">
+          <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" class="ring-bg"/><circle cx="32" cy="32" r="27" class="ring-fg" id="ring-fg"/></svg>
+          <div class="ring-label"><b id="conf-val">--</b><small>conf.</small></div>
+        </div>
+        <div>
+          <div class="verdict" id="verdict">Waiting</div>
+          <div class="sub">Device screen: <b id="dev-verdict">--</b></div>
+        </div>
+      </div>
+      <div class="kpi-foot"><span id="uncal-note" class="warn-text" hidden>Uncalibrated - press Calibrate on a clean beat</span><span id="verdict-note">Features P, Q, R per beat</span></div>
+    </article>
+
+    <article class="card kpi">
+      <div class="kpi-head"><span>Beats analysed</span><span class="chip" id="abn-chip">0% abnormal</span></div>
+      <div class="kpi-main"><span class="big" id="beat-count">0</span></div>
+      <div class="split-bar"><span id="split-normal"></span><span id="split-abn"></span></div>
+      <div class="kpi-foot"><span><i class="sw sw-ok"></i>Normal <b id="n-normal">0</b></span><span><i class="sw sw-bad"></i>Abnormal <b id="n-abn">0</b></span></div>
+    </article>
+
+    <article class="card kpi">
+      <div class="kpi-head"><span>Session</span><span class="chip" id="mode-chip">—</span></div>
+      <div class="kpi-main"><span class="big mono" id="elapsed">00:00</span></div>
+      <dl class="facts">
+        <div><dt>Source</dt><dd id="fact-src">—</dd></div>
+        <div><dt>Calibration</dt><dd id="fact-cal">—</dd></div>
+        <div><dt>Recording</dt><dd id="fact-rec">off</dd></div>
+      </dl>
+    </article>
+  </div>
+
+  <article class="card ecg-card">
+    <div class="card-head">
+      <div>
+        <h2>ECG strip</h2>
+        <p class="sub">Single lead · filtered on-device · 100 Hz stream · 25 mm/s grid (0.2 s × 0.5 mV major)</p>
+      </div>
+      <div class="card-tools">
+        <span class="legend"><i class="sw sw-ok"></i>normal R</span>
+        <span class="legend"><i class="sw sw-bad"></i>abnormal R</span>
+        <div class="seg" id="ecg-mode">
+          <button class="active" data-mode="sweep">Sweep</button>
+          <button data-mode="scroll">Scroll</button>
+        </div>
+        <button class="btn btn-ghost" id="freeze-btn">Freeze</button>
+      </div>
+    </div>
+    <div class="ecg-wrap">
+      <canvas id="ecg"></canvas>
+      <div class="ecg-overlay" id="ecg-overlay">Waiting for signal…</div>
+    </div>
+  </article>
+
+  <div class="grid-2">
+    <article class="card">
+      <div class="card-head">
+        <div><h2>Beat morphology</h2><p class="sub">Latest beat, measured against the local isoelectric line</p></div>
+      </div>
+      <div class="feat-bars" id="feat-bars"></div>
+      <div class="feat-legend">
+        <span><i class="band band-ok"></i>Normal class range</span>
+        <span><i class="band band-bad"></i>Abnormal class range</span>
+        <span><i class="tick"></i>Device screen threshold</span>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="card-head">
+        <div><h2>Trends</h2><p class="sub" id="trend-sub">Last 120 beats</p></div>
+        <div class="seg" id="trend-mode">
+          <button class="active" data-mode="hr">Heart rate</button>
+          <button data-mode="amp">Amplitudes</button>
+          <button data-mode="conf">Confidence</button>
+        </div>
+      </div>
+      <canvas class="chart" id="trend"></canvas>
+    </article>
+  </div>
+
+  <div class="grid-log">
+    <article class="card">
+      <div class="card-head">
+        <div><h2>Beat log</h2><p class="sub">Newest first · amplitudes in mV</p></div>
+        <label class="check"><input type="checkbox" id="only-abn"> Abnormal only</label>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl">
+          <thead><tr><th>#</th><th>Time</th><th>HR</th><th>P</th><th>Q</th><th>R</th><th>S</th><th>Device</th><th>Model</th><th>Conf.</th></tr></thead>
+          <tbody id="beat-rows"></tbody>
+        </table>
+        <div class="empty" id="beat-empty">No beats yet.</div>
+      </div>
+    </article>
+
+    <div class="stack">
+      <article class="card">
+        <div class="card-head"><div><h2>Controls</h2><p class="sub" id="ctrl-sub">Signal source and device commands</p></div></div>
+
+        <div class="field">
+          <label>Source</label>
+          <div class="seg seg-full" id="src-seg">
+            <button data-src="synthetic">Synthetic demo</button>
+            <button data-src="live">Arduino (serial)</button>
+          </div>
+        </div>
+
+        <div class="field" id="port-field" hidden>
+          <label for="port-sel">Serial port</label>
+          <div class="row">
+            <select id="port-sel"><option value="">Auto-detect</option></select>
+            <button class="icon-btn" id="port-refresh" title="Refresh ports">
+              <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <button class="btn btn-primary" id="connect-btn">Connect</button>
+          </div>
+        </div>
+
+        <div id="syn-ctrls" class="ctrl-group">
+          <label>Synthetic scenario</label>
+          <div class="seg seg-full" id="syn-seg">
+            <button data-cmd="x">Auto episodes</button>
+            <button data-cmd="n">Normal</button>
+            <button data-cmd="a">Abnormal</button>
+          </div>
+        </div>
+
+        <div id="live-ctrls" class="ctrl-group" hidden>
+          <label>Device commands <span class="chip" id="devmode-chip">LIVE</span></label>
+          <div class="btn-grid">
+            <button class="btn" data-cmd="t" title="Cycle LIVE / SIM-NORMAL / SIM-ABNORMAL">Test signal <kbd>t</kbd></button>
+            <button class="btn btn-primary" data-cmd="c" title="Calibrate gain on the next beat">Calibrate <kbd>c</kbd></button>
+            <button class="btn" data-cmd="s" title="Toggle waveform streaming">Stream <kbd>s</kbd></button>
+            <button class="btn" data-cmd="b" title="Toggle per-beat beep">Beep <kbd>b</kbd></button>
+            <button class="btn" data-cmd="d" title="Analog pin finder">Pin finder <kbd>d</kbd></button>
+            <button class="btn" data-cmd="h" title="Human-readable debug">Debug <kbd>h</kbd></button>
+            <button class="btn btn-danger" data-cmd="r" title="Reset detector and calibration">Reset <kbd>r</kbd></button>
+          </div>
+        </div>
+
+        <div class="row row-between">
+          <label class="check"><input type="checkbox" id="sound-chk"> Sound alarm</label>
+          <button class="btn btn-ghost" data-cmd="clear">Clear counters</button>
+        </div>
+      </article>
+
+      <article class="card console-card">
+        <div class="card-head"><div><h2>Event log</h2></div></div>
+        <ol class="console" id="console"></ol>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ SESSIONS -->
+<section class="tab-panel" id="tab-sessions">
+  <div class="sessions-layout">
+    <aside class="card session-list-card">
+      <div class="card-head">
+        <div><h2>Recordings</h2><p class="sub">host/session_*.csv</p></div>
+        <button class="icon-btn" id="sess-refresh" title="Refresh">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <ul class="session-list" id="session-list"></ul>
+    </aside>
+
+    <div class="session-detail" id="session-detail">
+      <div class="card empty-card">Select a recording to review it.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ LAB -->
+<section class="tab-panel" id="tab-lab">
+  <div class="lab-layout">
+    <article class="card">
+      <div class="card-head"><div><h2>Feature input</h2><p class="sub">Amplitudes in mV, as the firmware reports them</p></div></div>
+      <div id="sliders"></div>
+      <label class="presets-label">Presets</label>
+      <div class="presets" id="presets"></div>
+    </article>
+
+    <article class="card lab-result">
+      <div class="card-head"><div><h2>Prediction</h2><p class="sub" id="lab-model-sub">Random Forest</p></div></div>
+      <div class="lab-verdict" id="lab-verdict">—</div>
+      <div id="proba-bars"></div>
+      <h3 class="mini-h">Synthesised beat</h3>
+      <canvas class="chart chart-sm" id="lab-beat"></canvas>
+    </article>
+
+    <article class="card lab-wide">
+      <div class="card-head">
+        <div><h2>Where this beat sits in the training data</h2><p class="sub" id="lab-data-sub">data.csv</p></div>
+        <div class="seg" id="scatter-mode">
+          <button class="active" data-x="P">P vs R</button>
+          <button data-x="Q">Q vs R</button>
+        </div>
+      </div>
+      <div class="lab-split">
+        <canvas class="chart chart-tall" id="scatter"></canvas>
+        <div>
+          <h3 class="mini-h">Feature importance</h3>
+          <div id="importances"></div>
+          <div class="note">
+            <b>Read this before quoting accuracy.</b> data.csv is 100 synthetic rows and the two classes
+            do not overlap on any feature, so every model scores 100%. That number is not meaningful;
+            real figures need annotated records (MIT-BIH / PTB-XL) in Review 2.
+          </div>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ================================================================ SYSTEM -->
+<section class="tab-panel" id="tab-system">
+  <article class="card">
+    <div class="card-head"><div><h2>Signal chain</h2><p class="sub">ATmega328P firmware → USB serial → host classifier</p></div></div>
+    <ol class="pipeline">
+      <li><b>ADC</b><span>A0 / A1 · 200 Hz</span></li>
+      <li><b>4-tap moving average</b><span>nulls at 50 &amp; 100 Hz</span></li>
+      <li><b>IIR high-pass</b><span>~0.12 Hz, baseline wander</span></li>
+      <li><b>R-peak detector</b><span>adaptive 3/5 envelope · 250 ms refractory</span></li>
+      <li><b>P / Q / R / S</b><span>vs. local TP isoelectric line</span></li>
+      <li><b>Serial</b><span>115200 baud · B, D lines</span></li>
+      <li class="hl"><b>Random Forest</b><span>200 trees on (P, Q, R) · SNN in Review 2</span></li>
+    </ol>
+  </article>
+
+  <div class="spec-grid">
+    <article class="card spec"><h3>Sampling · 200 Hz</h3><p>Covers QRS detection and rate; chosen together with the 4-tap average so its spectral zeros land exactly on 50 Hz mains and its 100 Hz harmonic.</p></article>
+    <article class="card spec"><h3>Baseline removal</h3><p><code>baseAcc += maSum − (baseAcc &gt;&gt; 8)</code> tracks a 1.3 s running mean; subtracting it removes electrode offset and breathing drift while keeping the P wave.</p></article>
+    <article class="card spec"><h3>R-peak detection</h3><p>Idle → rising → wait state machine. Threshold at 3/5 of a decaying peak envelope plus a 250 ms refractory period, so a T wave is never counted (240 bpm ceiling).</p></article>
+    <article class="card spec"><h3>Lead-off watchdog</h3><p>If more than 10% of samples in a 1 s window are railed, the device shows <code>LEAD OFF - CHECK</code> instead of reporting a fake 200 bpm.</p></article>
+    <article class="card spec"><h3>On-device screen</h3><p>2-of-3 thresholds (P &gt; 0.28, Q &lt; −0.33, R &gt; 1.05 mV) plus brady &lt; 50 / tachy &gt; 120 bpm, confirmed over 3 consecutive beats before the buzzer alarms.</p></article>
+    <article class="card spec"><h3>Calibration</h3><p>5000 mV ÷ 1024 counts ÷ gain 1000 = 0.004883 mV/count. Press <kbd>c</kbd> on a clean beat and the firmware solves for the gain that makes R read 1.00 mV.</p></article>
+  </div>
+
+  <div class="grid-2">
+    <article class="card">
+      <div class="card-head"><div><h2>Serial protocol</h2></div></div>
+      <table class="tbl tbl-plain">
+        <thead><tr><th>Line</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>D,&lt;q4&gt;</code></td><td>Filtered waveform sample, 100 Hz (× 0.00122 mV)</td></tr>
+          <tr><td><code>B,ms,bpm,P,Q,R,S,result</code></td><td>One detected beat with features in mV</td></tr>
+          <tr><td><code>A,a0..a5</code></td><td>Analog-pin finder scan (<kbd>d</kbd>)</td></tr>
+          <tr><td><code># …</code></td><td>Status: mode, calibration, stream, help</td></tr>
+        </tbody>
+      </table>
+    </article>
+    <article class="card">
+      <div class="card-head"><div><h2>Limitations &amp; roadmap</h2></div></div>
+      <ul class="bullets">
+        <li><b>Synthetic training data.</b> 100 separable rows; accuracy is not meaningful yet.</li>
+        <li><b>Single lead, three electrodes.</b> Rate and gross morphology only; not 12-lead diagnosis.</li>
+        <li><b>Not a medical device.</b> No isolation barrier or certification; research prototype.</li>
+      </ul>
+      <ol class="roadmap">
+        <li class="done">Acquisition &amp; feature front end</li>
+        <li class="done">Host classifier + web dashboard</li>
+        <li>Real annotated dataset (MIT-BIH / PTB-XL)</li>
+        <li>Spike-encode features, train the SNN</li>
+        <li>Port inference to the device</li>
+      </ol>
+    </article>
+  </div>
+
+  <article class="card">
+    <details class="flow">
+      <summary>Firmware flowchart</summary>
+      <img src="/docs/flow.png" alt="NeuroCardio firmware flowchart" loading="lazy">
+    </details>
+  </article>
+</section>
+</main>
+
+<footer class="foot">Research prototype · not a medical device · synthetic data is not patient data</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

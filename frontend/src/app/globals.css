@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------- design tokens (light) ---------- */
+:root {
+  --bg: #f3f5f9;
+  --panel: #ffffff;
+  --panel-2: #f5f7fb;
+  --line: #e3e8ef;
+  --line-strong: #cfd7e3;
+  --fg: #142030;
+  --muted: #5b6a7d;
+  --faint: #8d99a9;
+  --accent: #0b7fd4;
+  --ok: #0e9a62;
+  --danger: #dc2f48;
+  --warn: #b77100;
+  --violet: #7c5cf0;
+  --amber: #d98a06;
+  --pink: #db3f8f;
+  --trace: #18202a;
+  --ecg-bg: #fff7f7;
+  --grid-minor: rgba(229, 80, 100, 0.12);
+  --grid-major: rgba(229, 80, 100, 0.32);
+  --glow: transparent;
+}
+
+/* ---------- design tokens (dark) ---------- */
+.dark {
+  --bg: #070b11;
+  --panel: #0e151e;
+  --panel-2: #141d28;
+  --line: #1c2735;
+  --line-strong: #2a394b;
+  --fg: #e6edf5;
+  --muted: #8a9aae;
+  --faint: #5a6a7e;
+  --accent: #4cb8ff;
+  --ok: #34e3a0;
+  --danger: #ff5a6e;
+  --warn: #ffb547;
+  --violet: #a78bfa;
+  --amber: #f5a524;
+  --pink: #f472b6;
+  --trace: #34e3a0;
+  --ecg-bg: #050a0f;
+  --grid-minor: rgba(52, 227, 160, 0.06);
+  --grid-major: rgba(52, 227, 160, 0.15);
+  --glow: rgba(52, 227, 160, 0.55);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-ok: var(--ok);
+  --color-danger: var(--danger);
+  --color-warn: var(--warn);
+  --color-violet: var(--violet);
+  --color-amber: var(--amber);
+  --color-pink: var(--pink);
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* soft glow behind the page in dark mode */
+.dark body {
+  background:
+    radial-gradient(1200px 500px at 15% -10%, rgba(76, 184, 255, 0.08), transparent 60%),
+    radial-gradient(900px 400px at 90% -5%, rgba(52, 227, 160, 0.06), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+@keyframes thump {
+  15% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.animate-thump { animation: thump 0.35s ease-out; }
+
+@keyframes fade {
+  from { opacity: 0.35; }
+}
+
+@keyframes alarm-pulse {
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--danger) 18%, transparent); }
+}
+.animate-alarm { animation: alarm-pulse 1.2s infinite; }
+
+input[type="range"] { accent-color: var(--accent); }
+
+/* thin scrollbars inside panels */
+.scroll-thin { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+.recharts-wrapper:focus, .recharts-surface:focus { outline: none; }
