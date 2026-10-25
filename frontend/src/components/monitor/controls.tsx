@@ -20,7 +20,7 @@ type Port = { device: string; description: string };
 
 export function Controls() {
   const { status, send, setSource, setModelKind, sound, setSound } = useLive();
-  const [picked, setPicked] = useState<"synthetic" | "live" | null>(null);
+  const [picked, setPicked] = useState<"synthetic" | "live" | "replay" | null>(null);
   const [ports, setPorts] = useState<Port[]>([]);
   const [pyserial, setPyserial] = useState(true);
   const [port, setPort] = useState("");
@@ -64,14 +64,22 @@ export function Controls() {
             full
             value={status?.model_kind ?? "rf"}
             onChange={async (k) => setModelErr(await setModelKind(k))}
-            options={[{ value: "rf", label: "Random Forest" }, { value: "snn-preview", label: "SNN" }]}
+            options={[{ value: "rf", label: "Random Forest" }, { value: "snn", label: "SNN" }]}
           />
           {modelErr && (
             <p className="mt-1.5 rounded-lg border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-[12px] text-warn">{modelErr}</p>
           )}
-          {status?.model_kind === "snn-preview" && (
-            <p className="mt-1.5 text-[11.5px] text-faint">SNN preview: spiking activity shown, verdicts from the Random Forest until the trained SNN is loaded.</p>
-          )}
+          {status?.model_kind === "snn" && (status.snn_trained ? (
+            <p className="mt-1.5 text-[11.5px] text-faint">
+              Trained SNN classifies every beat from its waveform, about 0.4&nbsp;s after the R peak
+              {status.snn_meta ? ` (test F1 ${status.snn_meta.test_f1}, AUC ${status.snn_meta.test_auc} on unseen MIT-BIH patients)` : ""}.
+              {status.source === "synthetic" && (
+                <span className="text-warn"> It was trained on real ECG, so its verdicts on the synthetic demo signal are not meaningful.</span>
+              )}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[11.5px] text-warn">SNN preview only ({status.snn_error}); verdicts from the Random Forest.</p>
+          ))}
         </div>
 
         <div>
@@ -80,13 +88,22 @@ export function Controls() {
             full
             value={shown}
             onChange={async (v) => {
-              if (v === "synthetic") {
-                setPicked(null);
-                if (status?.source !== "synthetic") await setSource("synthetic");
-              } else setPicked("live");
+              if (v === "live") { setPicked("live"); return; }
+              setPicked(null);
+              if (status?.source !== v) await setSource(v);
             }}
-            options={[{ value: "synthetic", label: "Synthetic demo" }, { value: "live", label: "Arduino (serial)" }]}
+            options={[
+              { value: "synthetic", label: "Synthetic" },
+              { value: "replay", label: "MIT-BIH replay" },
+              { value: "live", label: "Arduino" },
+            ]}
           />
+          {status?.source === "replay" && (
+            <p className="mt-1.5 text-[11.5px] text-faint">
+              Real annotated beats from MIT-BIH test patients (DS2, never seen in training), passed through the
+              firmware emulation{status.replay ? ` · now: record ${status.replay.record} (${status.replay.kind} clip)` : ""}.
+            </p>
+          )}
         </div>
 
         {shown === "live" && (
@@ -114,12 +131,16 @@ export function Controls() {
 
         {!live && (
           <div>
-            <div className="mb-1.5 text-xs font-medium text-muted">Synthetic scenario <Kbd>x</Kbd> <Kbd>n</Kbd> <Kbd>a</Kbd></div>
+            <div className="mb-1.5 text-xs font-medium text-muted">
+              {status?.source === "replay" ? "Replay clips" : "Synthetic scenario"} <Kbd>x</Kbd> <Kbd>n</Kbd> <Kbd>a</Kbd>
+            </div>
             <Segmented
               full
               value={synValue}
               onChange={(v) => send(v)}
-              options={[{ value: "x", label: "Auto episodes" }, { value: "n", label: "Normal" }, { value: "a", label: "Abnormal" }]}
+              options={status?.source === "replay"
+                ? [{ value: "x", label: "Alternate" }, { value: "n", label: "Normal rhythm" }, { value: "a", label: "Abnormal beats" }]
+                : [{ value: "x", label: "Auto episodes" }, { value: "n", label: "Normal" }, { value: "a", label: "Abnormal" }]}
             />
           </div>
         )}

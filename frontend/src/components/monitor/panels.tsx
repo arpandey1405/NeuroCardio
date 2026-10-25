@@ -157,7 +157,7 @@ export function Trends() {
 }
 
 /* ------------------------------------------------------------ beat log */
-function BeatRow({ b }: { b: Beat }) {
+function BeatRow({ b, showTruth }: { b: Beat; showTruth: boolean }) {
   return (
     <tr className={cx("border-t border-line hover:bg-panel-2", b.abnormal && "shadow-[inset_3px_0_0_var(--danger)]")}>
       <td className="px-3 py-2 font-mono text-[12.5px] text-muted">{b.n}</td>
@@ -170,6 +170,16 @@ function BeatRow({ b }: { b: Beat }) {
       </td>
       <td className="px-3 py-2">{b.model ? <Chip tone={isAbn(b.model) ? "danger" : "ok"}>{b.model}</Chip> : "--"}</td>
       <td className="px-3 py-2 font-mono text-[12.5px]">{pct(b.conf)}</td>
+      {showTruth && (
+        <td className="px-3 py-2">
+          {b.truth ? (
+            <span className={cx("font-mono font-semibold", isAbn(b.model) === b.truth.abnormal ? "text-ok" : "text-danger")}
+              title={`AAMI class ${b.truth.aami} · record ${b.truth.record}`}>
+              {b.truth.sym} {isAbn(b.model) === b.truth.abnormal ? "✓" : "✗"}
+            </span>
+          ) : "--"}
+        </td>
+      )}
     </tr>
   );
 }
@@ -181,9 +191,15 @@ export function BeatLog() {
     const list = onlyAbn ? beats.filter((b) => b.abnormal) : beats;
     return list.slice(-200).reverse();
   }, [beats, onlyAbn]);
+  const showTruth = rows.some((b) => b.truth);
+  const agree = useMemo(() => {
+    const t = beats.filter((b) => b.truth);
+    return t.length ? { n: t.length, ok: t.filter((b) => isAbn(b.model) === b.truth!.abnormal).length } : null;
+  }, [beats]);
   return (
     <Card>
-      <CardHeader title="Beat log" icon={<ScrollText size={18} />} sub="Newest first · amplitudes in mV">
+      <CardHeader title="Beat log" icon={<ScrollText size={18} />}
+        sub={agree ? `Newest first · verdict matched the annotation on ${agree.ok}/${agree.n} replayed beats (${Math.round(100 * agree.ok / agree.n)}%)` : "Newest first · amplitudes in mV"}>
         <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-muted">
           <input type="checkbox" checked={onlyAbn} onChange={(e) => setOnlyAbn(e.target.checked)} className="accent-[var(--accent)]" />
           Abnormal only
@@ -192,9 +208,9 @@ export function BeatLog() {
       <div className="scroll-thin max-h-[400px] overflow-auto rounded-xl border border-line">
         <table className="w-full whitespace-nowrap text-left text-[13px] tabular-nums">
           <thead className="sticky top-0 z-10 bg-panel-2 text-[11px] uppercase tracking-wider text-muted">
-            <tr>{["#", "Time", "HR", "P", "Q", "R", "S", "Device", "Model", "Conf."].map((h) => <th key={h} className="px-3 py-2.5 font-semibold">{h}</th>)}</tr>
+            <tr>{["#", "Time", "HR", "P", "Q", "R", "S", "Device", "Model", "Conf.", ...(showTruth ? ["Truth"] : [])].map((h) => <th key={h} className="px-3 py-2.5 font-semibold">{h}</th>)}</tr>
           </thead>
-          <tbody>{rows.map((b) => <BeatRow key={b.n} b={b} />)}</tbody>
+          <tbody>{rows.map((b) => <BeatRow key={b.n} b={b} showTruth={showTruth} />)}</tbody>
         </table>
         {rows.length === 0 && <div className="p-8 text-center text-muted">No beats yet.</div>}
       </div>

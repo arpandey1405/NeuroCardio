@@ -13,15 +13,15 @@ type Live = {
   logs: LogEntry[];
   counts: { n: number; abn: number };
   model: ModelInfo | null;
-  /** latest SNN-preview activity (null unless the backend runs --model snn-preview) */
+  /** latest spiking-network activity (null unless the SNN model is selected) */
   snn: SnnActivity | null;
   sound: boolean;
   setSound: (on: boolean) => void;
   send: (cmd: string) => Promise<void>;
-  setSource: (mode: "live" | "synthetic", port?: string | null) => Promise<void>;
+  setSource: (mode: "live" | "synthetic" | "replay", port?: string | null) => Promise<void>;
   setRecording: (on: boolean) => Promise<void>;
   /** resolves to an error message, or null when the backend switched */
-  setModelKind: (kind: "rf" | "snn-preview") => Promise<string | null>;
+  setModelKind: (kind: "rf" | "snn") => Promise<string | null>;
 };
 
 const LiveContext = createContext<Live | null>(null);
@@ -97,7 +97,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
           wave.receive(ev.v);
           break;
         case "beat":
-          wave.markBeat(ev.beat.abnormal, ev.beat.bpm);
+          wave.markBeat(ev.beat.abnormal, ev.beat.bpm, ev.beat.lag);
           setBeats((b) => (b.length >= MAX_BEATS ? [...b.slice(1), ev.beat] : [...b, ev.beat]));
           setCounts((c) => ({ n: ev.beat.n, abn: c.abn + (ev.beat.abnormal ? 1 : 0) }));
           break;

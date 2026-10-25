@@ -12,9 +12,9 @@ RUN
     python dashboard.py --port COM5    # start straight on the Arduino
     python dashboard.py --no-browser   # don't open a browser tab
     python dashboard.py --http 8080    # serve on a different port
-    python dashboard.py --model snn-preview
-                                       # show the SNN pipeline's spiking activity
-                                       # (verdicts still from the Random Forest)
+    python dashboard.py --model snn    # classify beats with the trained SNN
+                                       # (host/models/neurocardio_snn.pt; falls back to a
+                                       #  preview network if the file is missing)
 
 Then open http://127.0.0.1:8050 . The source (SYNTHETIC / LIVE serial) can
 also be switched from the dashboard itself.
@@ -26,9 +26,9 @@ ENDPOINTS
     GET  /api/stream          Server-Sent Events: wave chunks, beats, logs, status
     GET  /api/state           snapshot of everything the dashboard shows
     POST /api/command         {"cmd": "t"}        forward / synthetic control
-    POST /api/source          {"mode": "live", "port": "COM5"} | {"mode": "synthetic"}
+    POST /api/source          {"mode": "live", "port": "COM5"} | {"mode": "synthetic"} | {"mode": "replay"}
     POST /api/record          {"on": true}
-    POST /api/model-kind      {"kind": "rf" | "snn-preview"}
+    POST /api/model-kind      {"kind": "rf" | "snn"}
     GET  /api/ports           available serial ports
     POST /api/predict         {"P":..,"Q":..,"R":..}  -> class probabilities
     GET  /api/model           training data + model facts
@@ -146,6 +146,27 @@ def synthetic_beat(f, normal, t0):
     return out, round(t_r * FS_STREAM)
 
 
+
+# --------------------------------------------------------------- MIT-BIH replay
+REPLAY_FILE = os.path.join(HERE, "replay", "mitbih_ds2_clips.npz")
+AAMI_CLASS = {**dict.fromkeys("NLRej", "N"), **dict.fromkeys("AaJS", "S"), **dict.fromkeys("VE", "V"), "F": "F"}
+
+
+def load_replay_clips():
+    """Clips built by tools/build_mitbih_replay.py: real DS2 beats through the firmware emulation."""
+    import numpy as np
+    d = np.load(REPLAY_FILE)
+    clips = []
+    for i in range(int(d["n_clips"])):
+        clips.append(dict(
+            record=str(d[f"c{i}_record"]), kind=str(d[f"c{i}_kind"]),
+            wave=[round(float(v), 4) for v in d[f"c{i}_wave"].astype("float32")],
+            beats={int(r): dict(sym=str(sym), P=float(f[0]), Q=float(f[1]), R=float(f[2]), S=float(f[3]),
+                                bpm=int(bpm), device="ABNORMAL" if dev else "NORMAL")
+                   for r, sym, f, bpm, dev in zip(d[f"c{i}_r"], d[f"c{i}_sym"], d[f"c{i}_feat"],
+                                                  d[f"c{i}_bpm"], d[f"c{i}_device"])}))
+    return clips
+
 # --------------------------------------------------------------- event hub
 class Hub:
     """Fan-out of events to every connected browser."""
@@ -179,7 +200,14 @@ class Engine:
     def __init__(self, clf, hub, model_kind="rf"):
         self.clf, self.hub = clf, hub
         self.model_kind = "rf"
-        self.snn = None
+        self.snn = None                   # active spiking network (trained, or the preview)
+        self.snn_classifies = False       # True when the trained SNN makes the verdicts
+        self.trained_snn, self.snn_error = self._load_trained_snn()
+        self.last_wave_t = 0.0
+        self.warned_no_wave = False
+        self.replay_clips = None          # loaded on first use
+        self.replay_clip = None           # clip currently playing
+        self.replay_switch = False        # scenario changed: jump to a matching clip
         self.lock = threading.RLock()
         self.worker = None
         self.stop_evt = threading.Event()
@@ -209,7 +237,7 @@ class Engine:
             self.beats = deque(maxlen=600)
             self.wave = deque(maxlen=WAVE_KEEP)
             self.wave_total = 0           # absolute index of the next sample
-            self.snn_pending = []         # (beat n, absolute R index) waiting for post-R samples
+            self.snn_pending = []         # beats waiting for 0.4 s of samples after their R peak
             self.snn_last = None
             self.logs = deque(maxlen=200)
             self.n_beats = 0
@@ -230,8 +258,14 @@ class Engine:
                 auto=self.auto, scenario="NORMAL" if self.normal else "ABNORMAL",
                 recording=self.rec_name, model_ready=self.clf.ready,
                 model_error=self.clf.error, model_kind=self.model_kind,
-                model_label="SNN preview" if self.snn else "Random Forest",
-                verdict_by="Random Forest", n_beats=self.n_beats,
+                model_label=("SNN" if self.snn_classifies else "SNN preview") if self.snn else "Random Forest",
+                verdict_by="SNN" if self.snn_classifies else "Random Forest",
+                snn_trained=self.trained_snn is not None, snn_error=self.snn_error,
+                snn_meta=self._snn_meta(),
+                replay=(dict(record=self.replay_clip["record"], kind=self.replay_clip["kind"],
+                             beats=len(self.replay_clip["beats"]))
+                        if self.source == "replay" and self.replay_clip else None),
+                n_beats=self.n_beats,
                 n_abnormal=self.n_abnormal, alarm=self.alarm,
                 started=self.started, fs=FS_STREAM)
 
@@ -260,7 +294,7 @@ class Engine:
             self.connected = False
         self.reset_stats(publish=False)
         self.stop_evt = threading.Event()
-        target = self._run_live if mode == "live" else self._run_synthetic
+        target = {"live": self._run_live, "replay": self._run_replay}.get(mode, self._run_synthetic)
         self.worker = threading.Thread(target=target, args=(self.stop_evt,), daemon=True)
         self.worker.start()
         self.hub.publish({"type": "reset"})
@@ -276,36 +310,79 @@ class Engine:
         with self.lock:
             self.wave.extend(samples)
             self.wave_total += len(samples)
+            self.last_wave_t = time.time()
         self.hub.publish({"type": "wave", "v": samples})
         if self.snn:
             self._snn_run_ready()
 
-    # ----------------------------------------------------------- SNN preview
-    def _snn_mark_beat(self, n):
+    # ----------------------------------------------------------- SNN
+    @staticmethod
+    def _load_trained_snn():
+        try:
+            import snn_model
+            net = snn_model.load()
+            if net is None:
+                return None, "host/models/neurocardio_snn.pt not found - run the training notebook"
+            print(f"Trained SNN loaded: {net.hidden}-neuron LIF layers, "
+                  f"{net.steps} steps, threshold {net.threshold:.2f}")
+            return net, None
+        except Exception as e:                            # e.g. PyTorch not installed
+            print(f"[warn] trained SNN not loaded: {e}")
+            return None, f"trained SNN not loaded: {e}"
+
+    def _snn_meta(self):
+        net = self.trained_snn
+        if net is None:
+            return None
+        m = net.test_metrics
+        return dict(trained=net.trained, hidden=net.hidden, steps=net.steps, threshold=net.threshold,
+                    test_f1=round(m.get("F1", 0), 3), test_auc=round(m.get("ROC-AUC", 0), 3),
+                    test_sensitivity=round(m.get("Sensitivity", 0), 3))
+
+    def _snn_window_size(self):
+        net = self.snn
+        return (net.pre, net.post) if hasattr(net, "pre") else (20, 40)
+
+    def _snn_queue_beat(self, beat_args):
         """R = max of the last 30 samples, the same rule the training notebook uses."""
         with self.lock:
             recent = list(self.wave)[-30:]
             if not recent:
-                return
+                return False
             r_abs = self.wave_total - len(recent) + max(range(len(recent)), key=recent.__getitem__)
-            self.snn_pending.append((n, r_abs))
+            self.snn_pending.append(dict(args=beat_args, r_abs=r_abs, t=time.time()))
+            return True
 
     def _snn_run_ready(self):
-        from snn_preview import PRE, POST
-        ready = []
+        pre, post = self._snn_window_size()
+        ready, expired = [], []
         with self.lock:
             first = self.wave_total - len(self.wave)          # absolute index of wave[0]
             keep = []
-            for n, r_abs in self.snn_pending:
-                if self.wave_total >= r_abs + POST:           # 0.4 s after R has arrived
-                    if r_abs - PRE >= first:
-                        i = r_abs - PRE - first
-                        ready.append((n, list(self.wave)[i:i + PRE + POST]))
+            for item in self.snn_pending:
+                if self.wave_total >= item["r_abs"] + post:   # 0.4 s after R has arrived
+                    if item["r_abs"] - pre >= first:
+                        i = item["r_abs"] - pre - first
+                        ready.append((item, list(self.wave)[i:i + pre + post], self.wave_total - item["r_abs"]))
+                    else:
+                        expired.append(item)
+                elif time.time() - item["t"] > 2.0:          # stream stalled: don't hold beats forever
+                    expired.append(item)
                 else:
-                    keep.append((n, r_abs))
+                    keep.append(item)
             self.snn_pending = keep
-        for n, window in ready:
-            out = dict(n=n, **self.snn.run(window))
+        for item in expired:
+            if "beat" not in item["args"]:               # preview beats were already counted
+                self._finish_beat(**item["args"], via="Random Forest (no waveform)")
+        for item, window, lag in ready:
+            out = self.snn.run(window)
+            if self.snn_classifies:
+                beat = self._finish_beat(**item["args"], label=out["label"], conf=out["conf"], lag=lag, via="SNN")
+            else:
+                beat = item["args"].get("beat")
+            if beat is None:
+                continue
+            out = dict(n=beat["n"], **out)
             with self.lock:
                 self.snn_last = out
             self.hub.publish({"type": "snn", **out})
@@ -315,7 +392,10 @@ class Engine:
             self.connected = True
         self.publish_status()
         self.log("Synthetic source started - no sensor in use, not patient data.")
-        gen = self._synthetic_samples()
+        self._run_paced(stop, self._synthetic_samples())
+
+    def _run_paced(self, stop, gen):
+        """Stream a (sample, beat-or-None) generator at the 100 Hz serial rate."""
         t_start = time.perf_counter()
         sent = 0
         while not stop.is_set():
@@ -333,6 +413,51 @@ class Engine:
                 self._push_wave(chunk)
             sent += max(0, due)
             stop.wait(0.04)
+
+    def _run_replay(self, stop):
+        try:
+            if self.replay_clips is None:
+                self.replay_clips = load_replay_clips()
+        except Exception as e:
+            with self.lock:
+                self.error = f"MIT-BIH replay data missing ({e}) - run host/tools/build_mitbih_replay.py"
+            self.log(self.error, "error")
+            self.publish_status()
+            return
+        with self.lock:
+            self.connected = True
+        self.log("MIT-BIH replay: real beats from DS2 test patients through the firmware emulation "
+                 "(PhysioNet, ODC-By). Annotations shown as ground truth.", "ok")
+        self._run_paced(stop, self._replay_samples())
+
+    def _replay_samples(self):
+        order = {"normal": 0, "abnormal": 0}
+        kind = "normal"
+        while True:
+            with self.lock:
+                if not self.auto:
+                    kind = "normal" if self.normal else "abnormal"
+                self.replay_switch = False
+            pool = [c for c in self.replay_clips if c["kind"] == kind]
+            clip = pool[order[kind] % len(pool)]
+            order[kind] += 1
+            with self.lock:
+                self.replay_clip = clip
+            self.log(f"Replaying MIT-BIH record {clip['record']} ({kind} clip, {len(clip['beats'])} beats)")
+            self.publish_status()
+            for i, v in enumerate(clip["wave"]):
+                if self.replay_switch:
+                    break
+                b = clip["beats"].get(i)
+                beat = None
+                if b:
+                    beat = dict(bpm=b["bpm"], P=b["P"], Q=b["Q"], R=b["R"], S=b["S"], device=b["device"],
+                                ms=int(time.time() * 1000), scenario=f"MIT-BIH {clip['record']} {b['sym']}",
+                                truth=dict(sym=b["sym"], aami=AAMI_CLASS.get(b["sym"], "?"),
+                                           abnormal=AAMI_CLASS.get(b["sym"]) != "N", record=clip["record"]))
+                yield v, beat
+            if self.auto:                                   # auto: alternate normal and abnormal clips
+                kind = "abnormal" if kind == "normal" else "normal"
 
     def _synthetic_samples(self):
         t = 0.0
@@ -465,8 +590,24 @@ class Engine:
                          scenario=self.dev_mode)
 
     # ----------------------------------------------------------- beats
-    def on_beat(self, bpm, P, Q, R, S, device, ms, scenario):
-        label, conf = self.clf.classify(P, Q, R)
+    def on_beat(self, bpm, P, Q, R, S, device, ms, scenario, truth=None):
+        args = dict(bpm=bpm, P=P, Q=Q, R=R, S=S, device=device, ms=ms, scenario=scenario, truth=truth)
+        if self.snn and self.snn_classifies:
+            if time.time() - self.last_wave_t < 1.0 and self._snn_queue_beat(args):
+                return                                  # classified once its window has arrived
+            if not self.warned_no_wave:
+                self.warned_no_wave = True
+                self.log("SNN needs the waveform stream (press Stream); using the Random Forest meanwhile", "warn")
+            self._finish_beat(**args, via="Random Forest (no waveform)")
+            return
+        beat = self._finish_beat(**args, via="Random Forest")
+        if self.snn:                                    # preview: show spiking activity only
+            self._snn_queue_beat(dict(args, beat=beat))
+
+    def _finish_beat(self, bpm, P, Q, R, S, device, ms, scenario, label=None, conf=None,
+                     lag=None, via="Random Forest", beat=None, truth=None):
+        if label is None:
+            label, conf = self.clf.classify(P, Q, R)
         verdict = label or device
         abnormal = str(verdict).upper().startswith("ABNORM")
         uncal = self.source == "live" and self.dev_mode == "LIVE" and not self.calibrated
@@ -484,31 +625,31 @@ class Engine:
                         P=round(P, 4), Q=round(Q, 4), R=round(R, 4), S=round(S, 4),
                         device=device, model=label, conf=conf and round(conf, 3),
                         abnormal=abnormal, uncal=uncal, scenario=scenario,
-                        source=self.source.upper())
+                        source=self.source.upper(), via=via, lag=lag, truth=truth)
             self.beats.append(beat)
             if self.rec_writer:
                 self.rec_writer.writerow([
                     datetime.now().isoformat(timespec="seconds"),
-                    "SYNTHETIC" if self.source == "synthetic" else "LIVE SENSOR",
+                    {"synthetic": "SYNTHETIC", "replay": "MIT-BIH REPLAY"}.get(self.source, "LIVE SENSOR"),
                     scenario, ms, bpm, f"{P:.4f}", f"{Q:.4f}", f"{R:.4f}", f"{S:.4f}",
                     device, label or "", f"{conf:.3f}" if conf else "",
                     "yes" if uncal else ""])
                 self.rec_file.flush()
         self.hub.publish({"type": "beat", "beat": beat})
-        if self.snn:
-            self._snn_mark_beat(beat["n"])
         if self.alarm != was_alarm:
             self.log("ALARM: 3 consecutive abnormal beats confirmed" if self.alarm
                      else "Alarm cleared - rhythm classified normal", "error" if self.alarm else "ok")
             self.publish_status()
+        return beat
 
     # ----------------------------------------------------------- control
     def command(self, cmd):
         if cmd == "clear":
             self.reset_stats()
             return "dashboard counters cleared"
-        if self.source == "synthetic":
+        if self.source in ("synthetic", "replay"):
             with self.lock:
+                self.replay_switch = self.source == "replay"
                 if cmd == "n":
                     self.auto, self.normal = False, True
                 elif cmd == "a":
@@ -540,20 +681,33 @@ class Engine:
         return f"sent '{cmd}'"
 
     def set_model_kind(self, kind, announce=True):
-        """Switch between the Random Forest view and the SNN preview at runtime."""
-        if kind not in ("rf", "snn-preview"):
-            return False
-        snn = None
+        """Switch the classifier at runtime: the Random Forest, or the SNN."""
         if kind == "snn-preview":
-            from snn_preview import PreviewSNN
-            snn = PreviewSNN()
+            kind = "snn"
+        if kind not in ("rf", "snn"):
+            return False
+        snn, classifies = None, False
+        if kind == "snn":
+            if self.trained_snn is not None:
+                snn, classifies = self.trained_snn, True
+            else:
+                from snn_preview import PreviewSNN
+                snn = PreviewSNN()
         with self.lock:
             changed = kind != self.model_kind
-            self.model_kind, self.snn = kind, snn
-            self.snn_pending, self.snn_last = [], None
+            pending = self.snn_pending
+            self.model_kind, self.snn, self.snn_classifies = kind, snn, classifies
+            self.snn_pending, self.snn_last, self.warned_no_wave = [], None, False
+        for item in pending:                            # don't drop beats waiting for the old model
+            if "beat" not in item["args"]:
+                self._finish_beat(**item["args"])
         if announce and changed:
-            self.log("Model view: SNN preview (verdicts from the Random Forest)" if snn
-                     else "Model view: Random Forest", "ok")
+            if kind == "rf":
+                self.log("Model: Random Forest", "ok")
+            elif classifies:
+                self.log("Model: trained SNN - each verdict arrives about 0.4 s after its beat", "ok")
+            else:
+                self.log(f"Model: SNN preview ({self.snn_error}); verdicts from the Random Forest", "warn")
             self.publish_status()
         return True
 
@@ -744,8 +898,8 @@ def make_handler(engine, clf, hub):
                 return self._send(200, {"result": engine.command(str(body.get("cmd", "")))})
             if path == "/api/source":
                 mode = body.get("mode")
-                if mode not in ("live", "synthetic"):
-                    return self._send(400, {"error": "mode must be live or synthetic"})
+                if mode not in ("live", "synthetic", "replay"):
+                    return self._send(400, {"error": "mode must be live, synthetic or replay"})
                 engine.start(mode, body.get("port") or None)
                 return self._send(200, engine.status())
             if path == "/api/model-kind":
@@ -803,9 +957,9 @@ def main():
     ap.add_argument("--http", type=int, default=8050, help="dashboard port (default 8050)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-browser", action="store_true")
-    ap.add_argument("--model", choices=["rf", "snn-preview"], default="rf",
-                    help="snn-preview: show the SNN pipeline's spiking activity; "
-                         "verdicts still come from the Random Forest")
+    ap.add_argument("--model", choices=["rf", "snn", "snn-preview"], default="rf",
+                    help="classifier at start-up: rf (Random Forest) or snn (trained spiking "
+                         "network); it can also be switched from the dashboard")
     a = ap.parse_args()
 
     clf, hub = Classifier(), Hub()
@@ -823,9 +977,8 @@ def main():
         raise SystemExit(f"Port {a.http} is already in use - is another dashboard running? "
                          f"Stop it, or start this one with --http <other port>.")
 
-    if a.model == "snn-preview":
-        print("SNN preview: spike encoding + untrained LIF network shown on the dashboard; "
-              "verdicts from the Random Forest until the trained SNN is loaded.")
+    if a.model != "rf" and engine.trained_snn is None:
+        print(f"SNN preview only: {engine.snn_error}")
     engine.start("live" if (a.port or a.live) else "synthetic", a.port)
     url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '') else a.host}:{a.http}"
     print(f"NeuroCardio dashboard running at {url}   (Ctrl+C to stop)")

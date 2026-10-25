@@ -1,5 +1,7 @@
 export type Status = {
-  source: "synthetic" | "live";
+  source: "synthetic" | "live" | "replay";
+  /** MIT-BIH replay: the clip currently playing */
+  replay?: { record: string; kind: "normal" | "abnormal"; beats: number } | null;
   port: string | null;
   connected: boolean;
   error: string | null;
@@ -11,10 +13,16 @@ export type Status = {
   recording: string | null;
   model_ready: boolean;
   model_error: string | null;
-  /** "snn-preview": spike encoding + untrained LIF net shown, verdicts still from the RF */
-  model_kind?: "rf" | "snn-preview";
+  /** "snn": spiking network view; the trained SNN classifies when snn_trained is true */
+  model_kind?: "rf" | "snn";
   model_label?: string;
   verdict_by?: string;
+  snn_trained?: boolean;
+  snn_error?: string | null;
+  snn_meta?: {
+    trained: string | null; hidden: number; steps: number; threshold: number;
+    test_f1: number; test_auc: number; test_sensitivity: number;
+  } | null;
   n_beats: number;
   n_abnormal: number;
   alarm: boolean;
@@ -38,6 +46,12 @@ export type Beat = {
   uncal: boolean;
   scenario: string;
   source: string;
+  /** which classifier produced the verdict */
+  via?: string;
+  /** samples between the R peak and the latest sample when the verdict was published */
+  lag?: number | null;
+  /** MIT-BIH replay only: the cardiologist annotation of this beat */
+  truth?: { sym: string; aami: string; abnormal: boolean; record: string } | null;
 };
 
 export type LogEntry = { t: number; text: string; level: "info" | "ok" | "warn" | "error" };
@@ -84,6 +98,13 @@ export type SessionRow = {
 
 export type SnnActivity = {
   n: number;
+  trained?: boolean;
+  label?: string;
+  conf?: number;
+  p_abnormal?: number;
+  threshold?: number;
+  /** P(abnormal) of the readout accumulated up to each time step */
+  evidence?: number[];
   window: number[];
   on: number[];
   off: number[];

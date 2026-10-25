@@ -44,8 +44,14 @@ class WaveStore {
     if (samples.length) this.lastSampleAt = performance.now();
   }
 
-  /** The R peak is the tallest of the most recently received samples. */
-  markBeat(abn: boolean, bpm: number) {
+  /** Mark a beat's R peak: `lag` samples back when the backend says so (SNN verdicts arrive
+   *  ~0.4 s after R), otherwise the tallest of the most recently received samples. */
+  markBeat(abn: boolean, bpm: number, lag?: number | null) {
+    if (lag != null && lag > 0) {
+      this.markers.push({ abs: this.received - lag, abn, bpm });
+      if (this.markers.length > 40) this.markers.shift();
+      return;
+    }
     let best: [number, number] | null = null;
     for (const r of this.recent.slice(-40)) if (!best || r[1] > best[1]) best = r;
     if (best) this.markers.push({ abs: best[0], abn, bpm });

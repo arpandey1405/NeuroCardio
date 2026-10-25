@@ -8,18 +8,22 @@ import { Card, CardHeader, Chip } from "../ui";
 const COL = 10;                       // width of one time step
 const TRACE_H = 72;
 const IN_Y = 84, IN_ROW = 11;         // ON / OFF rows
-const H1_Y = 118, H1_ROW = 5;
+const H1_Y = 118;
 const GAP = 10;
+const OUT_H = 54;                     // P(abnormal) evidence strip
 
 export function SnnActivity() {
   const { status, snn } = useLive();
-  if (status?.model_kind !== "snn-preview") return null;
+  if (status?.model_kind !== "snn") return null;
 
+  const trained = !!snn?.trained;
   const steps = snn?.sizes.steps ?? 60;
   const h1n = snn?.sizes.h1 ?? 32;
   const h2n = snn?.sizes.h2 ?? 16;
+  const H1_ROW = Math.min(5, Math.max(2.5, 160 / Math.max(h1n, h2n)));
   const H2_Y = H1_Y + h1n * H1_ROW + GAP;
-  const H = H2_Y + h2n * H1_ROW + 4;
+  const OUT_Y = H2_Y + h2n * H1_ROW + GAP;
+  const H = (trained ? OUT_Y + OUT_H : H2_Y + h2n * H1_ROW) + 4;
   const W = steps * COL;
   const rIdx = 20;                    // window starts 20 samples before R
 
@@ -30,6 +34,13 @@ export function SnnActivity() {
     return snn.window.map((v, i) => `${i * COL + COL / 2},${y(v).toFixed(1)}`).join(" ");
   })();
 
+  const thr = snn?.threshold ?? 0.5;
+  const outY = (pv: number) => OUT_Y + 4 + (1 - pv) * (OUT_H - 8);
+  const evidence = trained && snn?.evidence
+    ? snn.evidence.map((v, i) => `${i * COL + COL / 2},${outY(v).toFixed(1)}`).join(" ")
+    : "";
+  const abn = snn?.label === "Abnormal";
+
   const s = snn?.stats;
   const saving = s ? 1 - s.synops / s.dense_macs : 0;
 
@@ -39,6 +50,7 @@ export function SnnActivity() {
     { y: IN_Y + IN_ROW * 1.5, text: "OFF" },
     { y: H1_Y + (h1n * H1_ROW) / 2, text: `LIF 1 · ${h1n}` },
     { y: H2_Y + (h2n * H1_ROW) / 2, text: `LIF 2 · ${h2n}` },
+    ...(trained ? [{ y: OUT_Y + OUT_H / 2, text: "P(abn.)" }] : []),
   ];
 
   return (
@@ -50,7 +62,7 @@ export function SnnActivity() {
           ? `Beat #${snn.n} · level-crossing encoding → ${h1n} → ${h2n} LIF neurons · ${steps} time steps (10 ms each)`
           : "Waiting for the first complete beat (0.4 s after its R peak)…"}
       >
-        <Chip tone="info">SNN preview</Chip>
+        {trained ? <Chip tone="ok">Trained SNN</Chip> : <Chip tone="warn">SNN preview</Chip>}
       </CardHeader>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -82,6 +94,13 @@ export function SnnActivity() {
                 <rect x={0} y={H2_Y} width={W} height={h2n * H1_ROW} fill="var(--panel-2)" opacity={0.5} />
                 {snn?.h1.map(([t, i]) => <rect key={`a${t}-${i}`} x={t * COL + 2} y={H1_Y + i * H1_ROW + 0.5} width={COL - 4} height={H1_ROW - 1} fill="var(--accent)" />)}
                 {snn?.h2.map(([t, i]) => <rect key={`b${t}-${i}`} x={t * COL + 2} y={H2_Y + i * H1_ROW + 0.5} width={COL - 4} height={H1_ROW - 1} fill="var(--violet)" />)}
+
+                {/* readout evidence: P(abnormal) accumulated over time, against the decision threshold */}
+                {trained && <>
+                  <rect x={0} y={OUT_Y} width={W} height={OUT_H} fill="var(--panel-2)" opacity={0.5} />
+                  <line x1={0} x2={W} y1={outY(thr)} y2={outY(thr)} stroke="var(--warn)" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+                  {evidence && <polyline points={evidence} fill="none" stroke={abn ? "var(--danger)" : "var(--ok)"} strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+                </>}
               </svg>
             </div>
           </div>
@@ -91,14 +110,19 @@ export function SnnActivity() {
         </div>
 
         <div className="flex flex-col gap-3">
+          {trained && (
+            <Tile label="SNN output" value={<span className={abn ? "text-danger" : "text-ok"}>{snn?.label ?? "--"}</span>}
+              hint={snn ? `P(abnormal) ${(snn.p_abnormal ?? 0).toFixed(2)} · threshold ${thr.toFixed(2)}` : ""} />
+          )}
           <Tile label="Input spikes" value={s ? s.input_events : "--"} hint={s ? `of ${steps * 2} slots · ${(s.input_sparsity * 100).toFixed(0)}% sparse` : "ON + OFF channels"} />
           <Tile label="Hidden spikes" value={s ? s.h1_spikes + s.h2_spikes : "--"}
             hint={s ? `layer 1 ${(s.h1_rate * 100).toFixed(1)}% · layer 2 ${(s.h2_rate * 100).toFixed(1)}% firing` : "two LIF layers"} />
           <Tile label="Synaptic operations" value={s ? s.synops.toLocaleString() : "--"}
             hint={s ? `vs ${s.dense_macs.toLocaleString()} MACs dense · ${(saving * 100).toFixed(0)}% fewer` : "event-driven accumulates"} accent />
           <p className="text-[11.5px] leading-relaxed text-faint">
-            Pipeline preview: real spike encoding of each live beat through an untrained network.
-            Verdicts come from the {status?.verdict_by ?? "Random Forest"} until the trained SNN is loaded.
+            {trained
+              ? "The trained SNN classifies this beat from its ON/OFF level-crossing spikes; the dashed line in the bottom strip is the decision threshold. Synaptic operations are counted from the actual spikes."
+              : `Pipeline preview: real spike encoding of each beat through an untrained network. Verdicts come from the ${status?.verdict_by ?? "Random Forest"} until the trained SNN is loaded.`}
           </p>
         </div>
       </div>

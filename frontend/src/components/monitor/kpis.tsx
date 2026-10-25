@@ -78,7 +78,9 @@ function Verdict() {
   const C = 2 * Math.PI * 27;
   return (
     <Card>
-      <KpiHead icon={<BrainCircuit size={15} />} label="Model verdict"><Chip>Random Forest</Chip></KpiHead>
+      <KpiHead icon={<BrainCircuit size={15} />} label="Model verdict">
+        <Chip tone={status?.verdict_by === "SNN" ? "info" : "neutral"}>{status?.verdict_by ?? "Random Forest"}</Chip>
+      </KpiHead>
       <div className="mt-3 flex items-center gap-4">
         <div className="relative size-[78px] shrink-0">
           <svg viewBox="0 0 64 64" className="size-full -rotate-90">
@@ -102,6 +104,14 @@ function Verdict() {
           <div className="mt-1 text-[12.5px] text-muted">
             Device screen: <b className={isAbn(last?.device) ? "text-danger" : "text-fg"}>{last?.device ?? "--"}</b>
           </div>
+          {last?.truth && (
+            <div className="mt-0.5 text-[12.5px] text-muted">
+              Annotation: <b className="text-fg">{last.truth.sym}</b> ({last.truth.aami === "N" ? "normal" : `AAMI ${last.truth.aami}`}){" "}
+              {isAbn(label) === last.truth.abnormal
+                ? <span className="font-semibold text-ok">✓ match</span>
+                : <span className="font-semibold text-danger">✗ mismatch</span>}
+            </div>
+          )}
         </div>
       </div>
       <div className="mt-4 text-xs">
@@ -110,7 +120,11 @@ function Verdict() {
         ) : status && !status.model_ready ? (
           <span className="text-warn">Model not loaded - run python train_model.py</span>
         ) : (
-          <span className="text-muted">Classified on P, Q, R amplitudes per beat</span>
+          <span className="text-muted">
+            {last?.via?.startsWith("SNN") ? "Classified from the beat waveform by the spiking network"
+              : last?.via?.includes("no waveform") ? "Random Forest fallback: no waveform stream"
+                : "Classified on P, Q, R amplitudes per beat"}
+          </span>
         )}
       </div>
     </Card>
@@ -154,7 +168,7 @@ function Session() {
     <Card>
       <KpiHead icon={<Clock size={15} />} label="Session">
         <Chip tone={live ? (status?.dev_mode === "LIVE" ? "info" : "warn") : "warn"}>
-          {status ? (live ? status.dev_mode : "SYNTHETIC") : "--"}
+          {status ? (live ? status.dev_mode : status.source === "replay" ? "MIT-BIH REPLAY" : "SYNTHETIC") : "--"}
         </Chip>
       </KpiHead>
       <div className="mt-3 font-mono text-5xl font-bold tabular-nums tracking-tight">
@@ -162,10 +176,10 @@ function Session() {
       </div>
       <dl className="mt-4 space-y-1.5 text-[12.5px]">
         <div className="flex justify-between gap-2"><dt className="text-muted">Source</dt>
-          <dd className="truncate font-medium">{live ? `${status?.port ?? "auto"} · ${status?.connected ? "connected" : "offline"}` : "Synthetic generator"}</dd></div>
+          <dd className="truncate font-medium">{live ? `${status?.port ?? "auto"} · ${status?.connected ? "connected" : "offline"}` : status?.source === "replay" ? `MIT-BIH record ${status.replay?.record ?? "…"}` : "Synthetic generator"}</dd></div>
         <div className="flex justify-between gap-2"><dt className="text-muted">Calibration</dt>
           <dd className={cx("font-medium", calTone && "text-warn")}>
-            {!live ? "n/a (simulated)" : status?.calibrated ? "Calibrated" : status?.dev_mode !== "LIVE" ? "Test vector" : "Not calibrated"}
+            {!live ? (status?.source === "replay" ? "n/a (recorded)" : "n/a (simulated)") : status?.calibrated ? "Calibrated" : status?.dev_mode !== "LIVE" ? "Test vector" : "Not calibrated"}
           </dd></div>
         <div className="flex justify-between gap-2"><dt className="text-muted">Recording</dt>
           <dd className={cx("truncate font-medium", status?.recording && "text-danger")} title={status?.recording ?? ""}>{status?.recording ?? "off"}</dd></div>

@@ -58,6 +58,9 @@ function SourcePill() {
   else if (status?.source === "live") {
     text = status.error ? "Arduino · error" : status.connected ? `Arduino · ${status.port}` : "Arduino · connecting";
     tone = status.error ? "err" : status.connected ? "on" : "idle";
+  } else if (status?.source === "replay") {
+    text = status.error ? "Replay · error" : `MIT-BIH replay · ${status.replay?.record ?? "…"}`;
+    tone = status.error ? "err" : "on";
   } else if (status) { text = "Synthetic demo"; tone = "on"; }
   return (
     <span className="inline-flex max-w-64 items-center gap-2 truncate rounded-full border border-line bg-panel-2 px-3 py-1.5 text-[12.5px] font-medium">
@@ -145,9 +148,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">Device</div>
           <dl className="mt-3 space-y-2 text-[12.5px]">
             <div className="flex justify-between gap-2"><dt className="text-muted">Backend</dt><dd className={online ? "text-ok" : online === false ? "text-danger" : "text-muted"}>{online ? "online" : online === false ? "offline" : "connecting"}</dd></div>
-            <div className="flex justify-between gap-2"><dt className="text-muted">Source</dt><dd>{status ? (status.source === "live" ? status.port ?? "auto" : "synthetic") : "--"}</dd></div>
-            <div className="flex justify-between gap-2"><dt className="text-muted">Mode</dt><dd>{status?.source === "live" ? status.dev_mode : status ? "demo" : "--"}</dd></div>
-            <div className="flex justify-between gap-2"><dt className="text-muted">Model</dt><dd className={status?.model_ready === false ? "text-warn" : ""}>{status ? (!status.model_ready ? "not loaded" : status.model_kind === "snn-preview" ? "SNN preview" : "RF · ready") : "--"}</dd></div>
+            <div className="flex justify-between gap-2"><dt className="text-muted">Source</dt><dd>{status ? (status.source === "live" ? status.port ?? "auto" : status.source === "replay" ? `MIT-BIH ${status.replay?.record ?? ""}` : "synthetic") : "--"}</dd></div>
+            <div className="flex justify-between gap-2"><dt className="text-muted">Mode</dt><dd>{status?.source === "live" ? status.dev_mode : status?.source === "replay" ? "replay" : status ? "demo" : "--"}</dd></div>
+            <div className="flex justify-between gap-2"><dt className="text-muted">Model</dt><dd className={status?.model_ready === false ? "text-warn" : ""}>{status ? (!status.model_ready ? "not loaded" : status.model_kind === "snn" ? (status.snn_trained ? "SNN · trained" : "SNN preview") : "RF · ready") : "--"}</dd></div>
           </dl>
         </div>
         <p className="mt-3 px-2 text-[11px] leading-relaxed text-faint">Research prototype · not a medical device</p>
