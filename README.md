@@ -224,7 +224,7 @@ See [`notebook/README.md`](notebook/README.md) for step-by-step instructions.
 
 ## Team
 
-**Aurnav Tyagi · Shreyash Khare · Arpan Dey**
+**Aurnav Tyagi(23BDS1077) · Shreyash Khare(23BRS1039) · Arpan Dey(23BPS1141)**
 School of Computer Science and Engineering (SCOPE)
 
 **Faculty guide: Suhasini S**
